@@ -1,0 +1,5 @@
+{
+  "manual_login_url": "https://www.nature.com/",
+  "unpaywall_email": "your-email@example.com",
+  "notes": "Copy this file to extraction/.local/local.json and keep private session data there only."
+}

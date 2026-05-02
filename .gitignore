@@ -1,0 +1,20 @@
+# Python bytecode cache (any directory level)
+**/__pycache__/
+**/*.pyc
+
+# Extraction runtime outputs and local secrets
+extraction/.local/
+extraction/.secrets/
+extraction/output_data/
+
+# Assessment runtime outputs and local secrets
+.local/
+.secrets/
+
+# Actual Papers Used
+papers/
+for_other/
+
+# Test files
+test_nature_fix.py
+scripts/

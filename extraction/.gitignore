@@ -1,0 +1,10 @@
+# Sensitive runtime state
+.local/
+.secrets/
+output/
+output_data/
+assessment/
+
+# Python cache
+__pycache__/
+*.pyc

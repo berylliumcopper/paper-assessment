@@ -1,0 +1,20 @@
+# === Core extraction ===
+beautifulsoup4>=4.11
+playwright>=1.40
+requests>=2.28
+
+# === PDF-to-markdown conversion (required: marker_single CLI) ===
+# marker-pdf provides marker_single; depends on torch, transformers, surya-ocr.
+marker-pdf>=1.10
+
+# === Related-paper full-text extraction (conditional fallback in code) ===
+pypdf>=3
+PyMuPDF>=1.21
+
+# === Supplementary material parsing (conditional — used by paper_reader.py) ===
+pandas>=1.5
+openpyxl>=3.0
+
+# === Supplementary material downloads: Zenodo ===
+zenodo-get>=3.0
+httpx>=0.28
