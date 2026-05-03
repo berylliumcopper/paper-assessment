@@ -259,6 +259,12 @@ def main() -> int:
     readables_note = prepare_supplementary_for_assessment(article_dir=article_dir)
     print(f"[ok] convert_supplementary_to_readable completed in {time.perf_counter() - readables_started:.1f}s {readables_note}")
 
+    # --- Defaults for variables that may be set by the related-search block ---
+    paper_category = "A"
+    theory_comp_exp_distribution = [0.33, 0.33, 0.34]
+    target_abstract = ""
+    target_problems: list = []
+
     related_payload = {"query": "", "counts": {}, "papers": [], "notes": ["Related search skipped."]}
     if not args.skip_related_search:
         print("[stage] related_search")
@@ -856,8 +862,57 @@ def main() -> int:
         f"[ok] normalize_and_write_outputs completed in {time.perf_counter() - write_started:.1f}s "
         f"trace_dir={trace_dir}"
     )
-    print(f"[done] Assessment written under: {article_dir} total_seconds={time.perf_counter() - started_at:.1f}")
+    elapsed_total = time.perf_counter() - started_at
+    _print_run_summary(article_dir, elapsed_total)
     return 0
+
+
+def _print_run_summary(article_dir: Path, elapsed_total: float) -> None:
+    """Print a clear summary of all output files at the end of a run."""
+    sep = "=" * 70
+    print(f"\n{sep}")
+    print(f"  ✓ ASSESSMENT COMPLETE — {elapsed_total:.0f}s total")
+    print(f"  Output folder: {article_dir.resolve()}")
+    print(sep)
+
+    # Describe key output files
+    file_descriptions = {
+        "assessment.md": "📄 Main assessment report",
+        "assessment.json": "📊 Assessment data (JSON)",
+        "related_work_report.md": "🔗 Related work analysis",
+        "related_work.json": "🔗 Related work data (JSON)",
+        "article.pdf": "📕 Original paper PDF",
+    }
+    # Dynamic: figure/table/derivation/pipeline reports
+    for f in sorted(article_dir.iterdir()):
+        if f.name.startswith("figure_table_assessment_report"):
+            file_descriptions[f.name] = "🖼️  Figure/table analysis"
+        elif f.name.startswith("derivation_assessment_report"):
+            file_descriptions[f.name] = "🧮 Derivation analysis"
+        elif f.name.startswith("pipeline_assessment_report"):
+            file_descriptions[f.name] = "⚙️  Pipeline analysis"
+
+    print()
+    found_any = False
+    for fname, desc in file_descriptions.items():
+        fpath = article_dir / fname
+        if fpath.exists():
+            size_kb = fpath.stat().st_size / 1024
+            print(f"  {desc:40s} {fname} ({size_kb:.1f} KB)")
+            found_any = True
+    if not found_any:
+        print("  (no output files found)")
+
+    # Count related PDFs
+    related_pdfs = list(article_dir.glob("related_pdfs/*.pdf"))
+    if related_pdfs:
+        print(f"\n  📚 Related paper PDFs saved: {len(related_pdfs)} files")
+        for p in related_pdfs[:5]:
+            print(f"     - {p.name}")
+        if len(related_pdfs) > 5:
+            print(f"     ... and {len(related_pdfs) - 5} more")
+
+    print(f"\n{sep}\n")
 
 
 def _prepare_from_remote_target(*, target: str, output_root: Path, limiter: RateLimiter, args) -> tuple[Path, dict]:
@@ -962,15 +1017,24 @@ def _prepare_from_remote_target(*, target: str, output_root: Path, limiter: Rate
 
 
 def _prepare_from_local_pdf(*, target: str, output_root: Path) -> tuple[Path, dict]:
-    pdf_path = Path(target)
+    import shutil
+    pdf_path = Path(target).resolve()
     if not pdf_path.exists() or not pdf_path.is_file():
         raise FileNotFoundError(f"Local PDF not found: {pdf_path}")
-    article_dir = pdf_path.resolve().parent
+    # Create a per-paper subfolder under output_root based on the PDF filename
+    paper_slug = pdf_path.stem.replace(" ", "_")
+    article_dir = output_root / paper_slug
     article_dir.mkdir(parents=True, exist_ok=True)
+    # Copy the PDF into the output folder as article.pdf (if not already there)
+    dest_pdf = article_dir / "article.pdf"
+    if not dest_pdf.exists() or dest_pdf.resolve() != pdf_path:
+        shutil.copy2(pdf_path, dest_pdf)
+        print(f"[info] copied PDF to {dest_pdf}")
     metadata = {
         "title": pdf_path.stem,
         "source": "local_pdf",
-        "resolved_url": str(pdf_path.resolve()),
+        "source_pdf": str(pdf_path),
+        "resolved_url": str(pdf_path),
         "doi": None,
     }
     (article_dir / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1014,7 +1078,55 @@ def _maybe_convert_pdf(*, article_dir: Path, convert_script: Path, skip_convert:
     )
     if completed.returncode == 0:
         return "PDF converted to markdown/images successfully."
-    return f"PDF conversion failed with return code {completed.returncode}. See conversion.log."
+
+    # --- Fallback: use PyMuPDF for lightweight text extraction ---
+    print("[info] Marker conversion failed, trying PyMuPDF fallback...", flush=True)
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(str(pdf_path))
+        pages_text = []
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text = page.get_text("text")
+            if text.strip():
+                pages_text.append(f"<!-- Page {page_num + 1} -->\n{text}")
+        doc.close()
+
+        if pages_text:
+            md_content = "\n\n---\n\n".join(pages_text)
+            md_path = converted_dir / "article.md"
+            md_path.write_text(md_content, encoding="utf-8")
+            print(f"[ok] PyMuPDF extracted text from {len(pages_text)} pages", flush=True)
+
+            # Also extract images from the PDF
+            doc = fitz.open(str(pdf_path))
+            img_dir = converted_dir / "article"
+            img_dir.mkdir(parents=True, exist_ok=True)
+            img_count = 0
+            for page_num in range(len(doc)):
+                for img_info in doc[page_num].get_images(full=True):
+                    xref = img_info[0]
+                    try:
+                        pix = fitz.Pixmap(doc, xref)
+                        if pix.n >= 5:  # CMYK: convert to RGB
+                            pix = fitz.Pixmap(fitz.csRGB, pix)
+                        img_path = img_dir / f"page{page_num + 1}_img{img_count + 1}.png"
+                        pix.save(str(img_path))
+                        img_count += 1
+                    except Exception:
+                        pass
+            doc.close()
+            if img_count:
+                print(f"[info] extracted {img_count} images from PDF", flush=True)
+
+            return f"PDF converted via PyMuPDF fallback ({len(pages_text)} pages, {img_count} images)."
+        else:
+            return "PyMuPDF fallback: no text content found in PDF."
+    except ImportError:
+        print("[warn] PyMuPDF not installed. Run: pip install PyMuPDF", flush=True)
+        return f"PDF conversion failed (Marker rc={completed.returncode}, PyMuPDF not available)."
+    except Exception as exc:
+        return f"PDF conversion failed (Marker rc={completed.returncode}, PyMuPDF error: {exc})."
 
 
 def _existing_converted_assets_note(*, converted_dir: Path) -> str | None:
