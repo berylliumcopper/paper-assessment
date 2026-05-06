@@ -1,7 +1,8 @@
 # Sensitive runtime state
 .local/
 .secrets/
-output/
+output/__pycache__/
+output/*.pyc
 output_data/
 assessment/
 
