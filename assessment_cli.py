@@ -351,7 +351,15 @@ def main() -> int:
         # Two-stage: fetch many (minimal info), then AI-filter to ~20.
         target_id_source = "doi"
         target_id_for_citation = target_doi
-        if not target_id_for_citation:
+
+        # Prefer arXiv ID over metadata DOI for arXiv papers - metadata DOI may be from a cited paper.
+        ru = (metadata.get("resolved_url") or "").strip()
+        arxiv_m = re.match(r"(?:https?://arxiv\.org/(?:abs|pdf)/)?(\d{4}\.\d{4,5})(?:v\d+)?", ru)
+        if arxiv_m:
+            target_id_for_citation = arxiv_m.group(1)
+            target_id_source = "arxiv"
+            print(f"[info] citation_search: using arXiv ID from resolved_url: {target_id_for_citation}", flush=True)
+        elif not target_id_for_citation:
             # Fallback 1: extract arXiv ID from resolved_url.
             ru = (metadata.get("resolved_url") or "").strip()
             m = re.match(r"(?:https?://arxiv\.org/(?:abs|pdf)/)?(\d{4}\.\d{4,5})(?:v\d+)?", ru)
@@ -405,6 +413,8 @@ def main() -> int:
                 print(f"[info] citation_search: {len(filtered_citing)}/{len(raw_dicts)} passing AI filter", flush=True)
             else:
                 print("[info] citation_search: no citing papers found or DOI not resolvable", flush=True)
+        else:
+            print("[info] citation_search: skipped (no DOI, arXiv ID, or markdown DOI found)", flush=True)
 
         # Final deduplication of all papers from all queries
         from assessment.related_work import RelatedPaper, _dedupe
